@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daftar Prosedur Harian KKR</title>
+    <!-- Muat Naik Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Gaya tersuai untuk menjamin keterbacaan di mudah alih */
+        .table-container {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        .data-table th, .data-table td {
+            min-width: 120px;
+        }
+        /* Gaya untuk modal transition */
+        .modal-enter {
+            transition: all 0.3s ease;
+        }
+
+        /* Gaya untuk Cetak / PDF */
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+            body {
+                background-color: white !important;
+            }
+            .data-table {
+                width: 100%;
+                border-collapse: collapse;
+            }
+            .data-table th, .data-table td {
+                border: 1px solid #ccc;
+                padding: 8px;
+            }
+        }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'primary': '#059669', /* Hijau Kesihatan */
+                        'secondary': '#f3f4f6', 
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-secondary font-sans p-4 md:p-8">
+
+    <div id="app" class="max-w-7xl mx-auto">
+        
+        <!-- Tajuk Utama -->
+        <header class="mb-8 no-print">
+            <h1 class="text-3xl md:text-4xl font-extrabold text-primary mb-2">
+                <span class="inline-block align-middle mr-2">🩺</span> Daftar Prosedur Harian
+            </h1>
+            <p class="text-gray-600">Pejabat Kesihatan Daerah Kota Tinggi - Klinik Kesihatan</p>
+            <hr class="mt-4 border-primary/50">
+        </header>
+
+        <!-- Kawalan Carian, Eksport, dan Paparan -->
+        <div class="mb-6 flex flex-col md:flex-row gap-4 items-center no-print">
+            <!-- Input Carian -->
+            <input 
+                type="text" 
+                id="searchInput" 
+                placeholder="Cari Nama, Tarikh, atau Prosedur..."
+                class="w-full md:w-1/3 p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-primary focus:border-primary transition duration-150"
+                onkeyup="filterData()"
+            >
+            
+            <!-- Kumpulan Butang Eksport -->
+            <div class="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+                <button 
+                    onclick="printTable()" 
+                    class="bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700 transition duration-150 shadow-md flex items-center justify-center text-sm"
+                >
+                    <span class="mr-1">🖨️</span> Cetak / PDF
+                </button>
+                <button 
+                    onclick="exportToCSV()" 
+                    class="bg-orange-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-orange-600 transition duration-150 shadow-md flex items-center justify-center text-sm"
+                >
+                    <span class="mr-1">📄</span> Eksport CSV / Excel
+                </button>
+            </div>
+
+            <!-- Status Pemuatan -->
+            <div id="loadingStatus" class="text-sm font-medium text-gray-500 hidden">
+                Memproses data...
+            </div>
+            <!-- Kiraan Keputusan -->
+            <div id="resultCount" class="text-md font-semibold text-primary/80 w-full md:w-auto md:ml-auto">
+                0 Rekod Dipaparkan
+            </div>
+        </div>
+
+        <!-- Kawasan Jadual (Responsive Container) -->
+        <div class="bg-white p-4 rounded-xl shadow-2xl table-container">
+            <table id="dataTable" class="min-w-full divide-y divide-gray-200 data-table">
+                <!-- Header Jadual akan diisi oleh JavaScript -->
+                <thead class="bg-gray-50">
+                    <tr id="tableHeader">
+                        <!-- Headers diisi di sini -->
+                    </tr>
+                </thead>
+                <!-- Body Jadual akan diisi oleh JavaScript -->
+                <tbody id="tableBody" class="bg-white divide-y divide-gray-200">
+                    <tr><td colspan="6" class="p-4 text-center text-gray-500">Tiada data dimuatkan.</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+    </div>
+
+    <!-- Modal for LLM Analysis (No-print added for printing) -->
+    <div id="procedureModal" class="fixed inset-0 bg-gray-900 bg-opacity-75 hidden flex items-center justify-center p-4 z-50 modal-enter no-print">
+        <div class="bg-white rounded-xl shadow-3xl max-w-lg w-full transform transition-all duration-300 scale-95 opacity-0" id="modalContent">
+            <div class="p-6">
+                <h2 id="modalTitle" class="text-2xl font-bold text-primary mb-4">Analisis Prosedur: [NAMA PROSEDUR]</h2>
+                
+                <div id="modalBody" class="mb-4 text-gray-700">
+                    Sila klik butang di bawah untuk mendapatkan maklumat perubatan bertauliah mengenai prosedur ini, termasuk tujuan dan penjagaan susulan.
+                </div>
+
+                <div id="modalLoading" class="hidden text-center p-4">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-2"></div>
+                    <p class="text-primary text-sm font-semibold">Gemini sedang menganalisis...</p>
+                </div>
+                
+                <div id="modalResult" class="hidden border-t pt-4 mt-4">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-2">Penerangan Gemini:</h3>
+                    <p id="geminiText" class="whitespace-pre-wrap text-sm mb-4"></p>
+                    <div id="geminiSources" class="text-xs text-gray-500 italic border-l-4 border-yellow-400 pl-2"></div>
+                </div>
+
+                <div class="flex justify-between items-center mt-6">
+                    <button 
+                        id="analyzeButton"
+                        class="bg-primary text-white px-5 py-2 rounded-lg font-semibold hover:bg-green-700 transition duration-150 shadow-md flex items-center"
+                        onclick="triggerGeminiAnalysis()"
+                    >
+                        <span class="mr-2">✨</span> Analisis Prosedur
+                    </button>
+                    <button 
+                        class="bg-gray-300 text-gray-800 px-5 py-2 rounded-lg font-semibold hover:bg-gray-400 transition duration-150"
+                        onclick="closeModal()"
+                    >
+                        Tutup
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        // Data CSV yang disalin dari fail anda. Sila ganti dengan data penuh jika anda mempunyai akses kepada isi penuh.
+        // Saya hanya menggunakan contoh data yang mengikuti struktur tajuk yang dikenalpasti.
+        const csvData = `
+TARIKH,BIL,NAMA,R/N,SUNTIKAN,,,,,,PROSEDUR RAWATAN MUDAH,,,,,,,,,UJIAN DIAGNOSTIK MUDAH ,,,,,,,PROSEDUR SURGERY MUDAH ,,,,,,,,,Pemberian Ubat DDA,PAP Smear,Pemberian Ubat Oral,Resusitation,PEGAWAI,,,
+,,,,ATT,Chlorpheniramine,Hyoscine,Hydrocort,Voren ,Lain-Lain,Dressing,Staning Mata ,Irrigasi Mata,Irrigasi telinga,DOTS,Nebuliser,T/sponge,Insertion of Suppository,"Lain-lain  (FBC, Suction DLL)",B/P,Ujian suhu Badan,Vision Test,Peak Flow Meter ,GM ,ECG,R/swab / hvs,IV,T&S ,I&D ,F/B Rv ,R/tube,CBD ,Immob / Splint,STO,Nail AV,,,,,MO,PPP,SN,JM,PPK
+2024-09-01,1,Ahmad bin Salleh,RN1001,Y,,,,,,"A-01",,,,Y,,,,,,Y,,,,,Y,,,,,,,Y,,,,,,Y,PPP,,,,,
+2024-09-01,2,Siti Nurhaliza,RN1002,,Y,,,,,,,,Y,,,,,,Y,,,,,,,,,,,,,,Y,,,SN,,,
+2024-09-02,3,Chandra Kumar,RN1003,,,,Y,,,,,,,Y,,,,,,,,Y,,,,,Y,,,,,Y,,,,JM,
+2024-09-02,4,Lee Wei Lun,RN1004,,,,,,,,,"D-02",,Y,,Y,,,,,Y,,,,,Y,,,,,,,Y,,,Y,,MO
+2024-09-03,5,Fatimah Ali,RN1005,,,,,Y,,"A-01",,,,,,,,Y,,,,,,Y,,,,,Y,,,,,Y,PPP,,,
+2024-09-03,6,Mohd Zaki,RN1006,Y,,,,,,,Y,,,,,Y,,,,,,Y,,,,,,,,,,,,,,Y,,,SN,,,
+2024-09-04,7,Puan Zarina,RN1007,,,,Y,,,,,,,,Y,,,,,,,,Y,,,,,Y,,,,,,JM,
+2024-09-04,8,Khairul Azhar,RN1008,,,,,,,Y,"A-01",,Y,,Y,,,,,Y,,,,,Y,,,,,,,Y,,,Y,,MO
+2024-09-05,9,Wong Mei Ling,RN1009,,Y,,,,,Y,,"A-01",,,,,,,,Y,,,,,,Y,,,,,Y,,,,,Y,PPP,,,
+2024-09-05,10,Ismail Hassan,RN1010,Y,Y,,,,,,,,Y,,,,,,Y,,,,,,,,,,,,,,Y,,,SN,,,
+`;
+
+        let rawData = [];
+        let displayData = [];
+        const tableBody = document.getElementById('tableBody');
+        const tableHeader = document.getElementById('tableHeader');
+        const searchInput = document.getElementById('searchInput');
+        const resultCount = document.getElementById('resultCount');
+
+        // Peta lajur penuh untuk kegunaan carian dan pemprosesan
+        const fullHeaders = [
+            'TARIKH', 'BIL', 'NAMA', 'R/N', 'ATT', 'Chlorpheniramine', 'Hyoscine', 'Hydrocort', 'Voren', 'Lain-Lain (Suntikan)', 'Dressing', 
+            'Staning Mata', 'Irrigasi Mata', 'Irrigasi telinga', 'DOTS', 'Nebuliser', 'T/sponge', 'Insertion of Suppository', 
+            'Lain-lain (FBC, Suction DLL)', 'B/P', 'Ujian suhu Badan', 'Vision Test', 'Peak Flow Meter', 'GM', 'ECG', 'R/swab / hvs', 
+            'IV', 'T&S', 'I&D', 'F/B Rv', 'R/tube', 'CBD', 'Immob / Splint', 'STO', 'Nail AV', 'Pemberian Ubat DDA', 'PAP Smear', 
+            'Pemberian Ubat Oral', 'Resusitation', 'MO', 'PPP', 'SN', 'JM', 'PPK'
+        ];
+
+        // Lajur yang akan dipaparkan dalam jadual
+        const displayColumns = [
+            { key: 'TARIKH', title: 'Tarikh' },
+            { key: 'BIL', title: 'Bil' },
+            { key: 'NAMA', title: 'Nama Pesakit' },
+            { key: 'R/N', title: 'R/N' },
+            { key: 'MAIN_PROCEDURE', title: 'Prosedur Utama', isComputed: true },
+            { key: 'STAFF', title: 'Staf Bertanggungjawab', isComputed: true }
+        ];
+
+        // Helper function untuk memproses nilai CSV
+        function parseCSV(csvText) {
+            const lines = csvText.trim().split('\n');
+            // Baris 1: Tajuk Kategori (diabaikan untuk lajur, tetapi digunakan untuk menentukan baris data bermula)
+            // Baris 2: Tajuk Item Spesifik (digunakan sebagai asas pemetaan lajur)
+            const dataLines = lines.slice(2); 
+
+            // Split line 2 untuk mendapatkan tajuk lajur yang lebih spesifik
+            // Kita gunakan fullHeaders yang telah ditetapkan secara manual berdasarkan Baris 2 data anda
+            
+            const results = [];
+            
+            dataLines.forEach((line) => {
+                // Split baris data. Guna regex untuk mengendalikan koma di dalam petikan.
+                const values = [];
+                let current = '';
+                let inQuotes = false;
+                for (let i = 0; i < line.length; i++) {
+                    const char = line[i];
+                    if (char === '"') {
+                        inQuotes = !inQuotes;
+                    } else if (char === ',' && !inQuotes) {
+                        values.push(current.trim());
+                        current = '';
+                    } else {
+                        current += char;
+                    }
+                }
+                values.push(current.trim()); // Tolak item terakhir
+
+                if (values.length >= fullHeaders.length) {
+                    let record = {};
+                    for (let i = 0; i < fullHeaders.length; i++) {
+                        record[fullHeaders[i]] = values[i] || ''; // Mengisi nilai ke dalam objek menggunakan tajuk penuh
+                    }
+                    
+                    // Tambah Lajur Komputasi
+                    record = computeDisplayFields(record);
+                    results.push(record);
+                }
+            });
+            return results;
+        }
+
+        // Fungsi untuk mengira lajur paparan ringkas
+        function computeDisplayFields(record) {
+            // 1. Prosedur Utama (Gabungan prosedur / ubat yang ditanda 'Y')
+            let procedures = [];
+            
+            // Sertakan semua header, kecuali 4 lajur awal (TARIKH, BIL, NAMA, R/N) dan 5 lajur akhir (PEGAWAI)
+            const procedureHeaders = fullHeaders.slice(4, fullHeaders.length - 5); 
+            
+            procedureHeaders.forEach(header => {
+                // Periksa sama ada ada nilai 'Y' atau nilai selain kosong
+                const value = record[header].toUpperCase();
+                // Check for 'Y' or any non-empty value if it's a 'Lain-lain' field that might contain codes/text
+                if (value === 'Y' || (value.length > 0 && header.includes('Lain-Lain'))) {
+                    // Clean up header name for display
+                    procedures.push(header.replace(/ \(.*/, '').replace(/,$/, '')); 
+                }
+            });
+            
+            record.MAIN_PROCEDURE = procedures.length > 0 ? procedures.join(', ') : 'Tiada Prosedur Direkod';
+
+            // 2. Staf Bertanggungjawab (MO, PPP, SN, JM, PPK)
+            let staff = [];
+            ['MO', 'PPP', 'SN', 'JM', 'PPK'].forEach(s => {
+                if (record[s] && record[s].length > 0) {
+                    staff.push(s); 
+                }
+            });
+            record.STAFF = staff.length > 0 ? staff.join(', ') : 'Tidak Ditanda';
+
+            return record;
+        }
+
+        // Fungsi untuk memaparkan data dalam jadual
+        function renderTable(data) {
+            tableHeader.innerHTML = '';
+            tableBody.innerHTML = '';
+            
+            if (data.length === 0) {
+                tableBody.innerHTML = `<tr><td colspan="${displayColumns.length}" class="p-4 text-center text-gray-500">Tiada rekod ditemui. Sila cuba kata kunci lain.</td></tr>`;
+                resultCount.textContent = `0 Rekod Dipaparkan`;
+                return;
+            }
+
+            // Bina Header
+            displayColumns.forEach(col => {
+                const th = document.createElement('th');
+                th.className = 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider';
+                th.textContent = col.title;
+                tableHeader.appendChild(th);
+            });
+
+            // Bina Body
+            data.forEach((record, index) => {
+                const tr = document.createElement('tr');
+                tr.className = index % 2 === 0 ? 'bg-white' : 'bg-gray-50';
+                tr.classList.add('hover:bg-gray-100', 'transition', 'duration-100');
+
+                displayColumns.forEach(col => {
+                    const td = document.createElement('td');
+                    td.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-800';
+                    td.textContent = record[col.key] || '-';
+
+                    // Tambah fungsi klik untuk Analisis Prosedur menggunakan Gemini
+                    if (col.key === 'MAIN_PROCEDURE' && record[col.key] !== 'Tiada Prosedur Direkod') {
+                        td.classList.add('cursor-pointer', 'text-blue-600', 'font-medium', 'hover:text-blue-800', 'underline');
+                        td.onclick = () => openModal(record[col.key]);
+                    }
+
+                    tr.appendChild(td);
+                });
+                tableBody.appendChild(tr);
+            });
+
+            resultCount.textContent = `${data.length} Rekod Dipaparkan`;
+        }
+
+        // Fungsi untuk menapis data berdasarkan carian
+        function filterData() {
+            const searchTerm = searchInput.value.toLowerCase().trim();
+            
+            if (!searchTerm) {
+                displayData = [...rawData];
+            } else {
+                displayData = rawData.filter(record => {
+                    // Carian dilakukan ke atas SEMUA lajur asal (fullHeaders) + lajur komputasi.
+                    const searchableString = fullHeaders.map(h => record[h]).join(' ').toLowerCase() + ' ' + 
+                                             record.MAIN_PROCEDURE.toLowerCase() + ' ' + 
+                                             record.STAFF.toLowerCase();
+
+                    return searchableString.includes(searchTerm);
+                });
+            }
+            renderTable(displayData);
+        }
+
+        // --- Fungsi Eksport ---
+
+        // Fungsi untuk mencetak jadual (untuk PDF)
+        function printTable() {
+            // window.print() akan mencetuskan dialog cetak penyemak imbas
+            window.print();
+        }
+
+        // Fungsi untuk mengeksport data yang dipaparkan ke CSV (Excel/Google Sheets)
+        function exportToCSV() {
+            const data = displayData;
+            if (data.length === 0) {
+                console.warn('Eksport Gagal: Tiada data untuk dieksport.');
+                return;
+            }
+
+            // 1. Bina Header CSV
+            const headerRow = displayColumns.map(col => `"${col.title.replace(/"/g, '""')}"`).join(',');
+            
+            // 2. Bina Baris Data CSV
+            const csvRows = data.map(record => {
+                return displayColumns.map(col => {
+                    let value = record[col.key] || '';
+                    // Handle values that contain quotes and commas
+                    value = String(value).replace(/"/g, '""');
+                    if (value.includes(',')) {
+                        return `"${value}"`;
+                    }
+                    return value;
+                }).join(',');
+            });
+
+            const csvContent = [headerRow, ...csvRows].join('\n');
+            
+            // 3. Trigger download
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            
+            const date = new Date().toISOString().slice(0, 10).replace(/-/g, ''); // yyyymmdd
+            const filename = `Daftar_Prosedur_${date}.csv`;
+
+            if (navigator.msSaveBlob) { // IE 10+
+                navigator.msSaveBlob(blob, filename);
+            } else {
+                link.href = URL.createObjectURL(blob);
+                link.setAttribute('download', filename);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+            console.log(`Berjaya mengeksport ${data.length} rekod ke ${filename}`);
+        }
+
+        // --- LLM API Functions & Modal Control ---
+
+        const apiKey = ""; // Dibiarkan kosong untuk persekitaran Canvas
+        const apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent";
+        let currentProcedure = '';
+
+        const procedureModal = document.getElementById('procedureModal');
+        const modalContent = document.getElementById('modalContent');
+        const modalTitle = document.getElementById('modalTitle');
+        const modalBody = document.getElementById('modalBody');
+        const modalLoading = document.getElementById('modalLoading');
+        const modalResult = document.getElementById('modalResult');
+        const geminiText = document.getElementById('geminiText');
+        const geminiSources = document.getElementById('geminiSources');
+        const analyzeButton = document.getElementById('analyzeButton');
+
+
+        function openModal(procedure) {
+            currentProcedure = procedure;
+            modalTitle.textContent = `Analisis Prosedur: ${procedure}`;
+            modalBody.textContent = `Sila klik butang "Analisis Prosedur" untuk mendapatkan ringkasan maklumat perubatan bertauliah mengenai **${procedure}** (menggunakan Gemini dengan carian Google).`;
+            
+            // Reset results
+            modalResult.classList.add('hidden');
+            modalLoading.classList.add('hidden');
+            analyzeButton.classList.remove('hidden');
+
+            // Show modal with animation
+            procedureModal.classList.remove('hidden');
+            setTimeout(() => {
+                modalContent.classList.remove('scale-95', 'opacity-0');
+                modalContent.classList.add('scale-100', 'opacity-100');
+            }, 10);
+        }
+
+        function closeModal() {
+            modalContent.classList.remove('scale-100', 'opacity-100');
+            modalContent.classList.add('scale-95', 'opacity-0');
+            setTimeout(() => {
+                procedureModal.classList.add('hidden');
+            }, 300);
+        }
+
+        function triggerGeminiAnalysis() {
+            const procedure = currentProcedure;
+            if (procedure) {
+                modalLoading.classList.remove('hidden');
+                analyzeButton.classList.add('hidden');
+                modalResult.classList.add('hidden');
+                explainProcedure(procedure);
+            }
+        }
+
+        // Fungsi utama untuk memanggil Gemini API
+        async function explainProcedure(procedureName, maxRetries = 5) {
+            const systemPrompt = "Act as a concise medical information summarizer for healthcare staff. Provide a one-paragraph summary of the purpose of the procedure, followed by a brief bulleted list (max 3 points) on common patient aftercare or follow-up needs.";
+            const userQuery = `Terangkan ringkas mengenai prosedur perubatan: ${procedureName}. Fokus pada tujuan dan penjagaan susulan. Jawab dalam Bahasa Melayu.`;
+
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                tools: [{ "google_search": {} }], // Menggunakan Google Search untuk grounding
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }]
+                },
+            };
+
+            let lastError = null;
+            for (let attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                    const response = await fetch(`${apiUrl}?key=${apiKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        if (response.status === 429 && attempt < maxRetries - 1) {
+                            throw new Error('Rate limit exceeded (429). Retrying...');
+                        }
+                        const errorBody = await response.text();
+                        throw new Error(`API call failed with status ${response.status}: ${errorBody}`);
+                    }
+
+                    const result = await response.json();
+                    const candidate = result.candidates?.[0];
+
+                    if (candidate && candidate.content?.parts?.[0]?.text) {
+                        const text = candidate.content.parts[0].text;
+                        let sources = [];
+                        const groundingMetadata = candidate.groundingMetadata;
+                        
+                        if (groundingMetadata && groundingMetadata.groundingAttributions) {
+                            sources = groundingMetadata.groundingAttributions
+                                .map(attribution => ({
+                                    uri: attribution.web?.uri,
+                                    title: attribution.web?.title,
+                                }))
+                                .filter(source => source.uri && source.title);
+                        }
+
+                        // Display results
+                        geminiText.textContent = text;
+                        geminiSources.innerHTML = sources.length > 0 
+                            ? 'Sumber Rujukan:<br>' + sources.map((s, i) => 
+                                `<a href="${s.uri}" target="_blank" class="block hover:underline">${i + 1}. ${s.title}</a>`
+                            ).join('')
+                            : 'Tiada sumber rujukan ditemui.';
+
+                        modalResult.classList.remove('hidden');
+                        modalLoading.classList.add('hidden');
+                        return;
+
+                    } else {
+                        throw new Error("Invalid response structure from API.");
+                    }
+
+                } catch (error) {
+                    lastError = error;
+                    console.error(`Attempt ${attempt + 1} failed:`, error.message);
+                    if (attempt < maxRetries - 1) {
+                        const delay = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    }
+                }
+            }
+            
+            // Handle final failure
+            geminiText.textContent = `Maaf, gagal mendapatkan maklumat (Ralat: ${lastError ? lastError.message : 'Tidak Diketahui'}). Sila cuba lagi sebentar.`;
+            geminiSources.innerHTML = '';
+            modalResult.classList.remove('hidden');
+            modalLoading.classList.add('hidden');
+            analyzeButton.classList.remove('hidden'); // Allow retry
+        }
+
+
+        // Inisialisasi Aplikasi
+        window.onload = function() {
+            try {
+                // 1. Parse Data
+                rawData = parseCSV(csvData);
+                
+                // 2. Papar semua data pada mulanya
+                displayData = [...rawData];
+                renderTable(displayData);
+
+                // 3. Paparkan status berjaya
+                document.getElementById('loadingStatus').classList.add('hidden');
+
+            } catch (error) {
+                console.error("Gagal memuatkan atau memproses data CSV:", error);
+                tableBody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-red-500">Ralat: Gagal memproses fail data. Sila semak format CSV.</td></tr>`;
+            }
+        };
+
+    </script>
+</body>
+</html>
